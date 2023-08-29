@@ -1,7 +1,90 @@
 const express = require('express');
 const bcrypt = require('bcrypt');
+const passport = require('passport');
+const session = require('express-session');
+const LocalStrategy = require('passport-local').Strategy;
 const usersRouter = express.Router();
 const db = require('./db');
+
+
+//configuração a estratégia local de autenticação
+passport.use(new LocalStrategy(
+    {
+        usernameField: 'email',
+        passwordField: 'password'
+    },
+
+    async (email, password, done) =>{
+        try{
+            //confirmando email se for não encontrado já da mensagem de erro
+            const user = await db.query('SELECT * FROM users WHERE email = $1', [email]);
+            if(!user.rows.length){
+                return done(null, false, {message: 'User not foung'});
+            }
+            //confirmando senha se for falso dar mensagem de erro
+            const isPasswordValid = await bcrypt.compare(password, user.rows[0]. password_hash);
+            if(!isPasswordValid){
+                return done(null, false, {message: 'Invalid password'});
+            }
+            // caso passe nos dois testes
+            return done(null, user.rows[0]);
+        }catch(error){
+                return done(error);
+            }
+            
+    }
+
+));
+
+//Configurar serializerUser e deserializeUser -- aqui deve ter cuidado para colocar item que irá buscar o usuario
+//pode ser id, email, usuario, usar o valor correto
+passport.serializeUser((user, done) =>{
+    done(null, user.email);
+});
+
+passport.deserializeUser(async(email, done) =>{
+    try{
+        console.log(email);
+        const user = await db.query('SELECT * FROM users WHERE email = $1', [email]);
+        done(null, user.rows[0]);
+    } catch(error){
+        done(error);
+    };
+});
+
+//Middlewares
+usersRouter.use(session({
+  secret: 'secret-key',
+  resave: false,
+  saveUninitialized: false
+}));
+
+usersRouter.use(passport.initialize());
+usersRouter.use(passport.session());
+
+//rota de login
+usersRouter.post('/login', passport.authenticate('local'), (req, res, next) =>{
+    res.json({message: 'Login sucecessful', user: req.user});
+});
+
+//Rota para retornar perfil do usuario caso o login tenha sido autenticado
+usersRouter.get('/profile', (req, res, next) =>{
+    if(req.isAuthenticated()){
+        res.json({user: req.user})
+    }else{
+        res.status(401).json({message: 'Unauthorized'});
+    }
+});
+
+//Rota para logoout
+usersRouter.get('/logout', (req, res, next) => {
+    req.session.destroy((err) => {
+        if (err) {
+            console.error('Error destroying session', err);
+        }
+        res.redirect('/users');
+    });
+});
 
 //update user
 usersRouter.put('/:id', async (req, res, next) =>{
